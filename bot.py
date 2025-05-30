@@ -1,6 +1,7 @@
 """Telegram бот для отправки заявок на закупку."""
 
 from configparser import ConfigParser
+from enum import Enum, auto
 from logging import INFO, basicConfig as logger_config, getLogger
 from os import getenv
 from sys import exit as sys_exit
@@ -12,16 +13,20 @@ from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
-    ContextTypes
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters
 )
 
 from messages import (
     COMMAND_MESSAGES,
+    DEPARTMENTS,
     ERROR_MESSAGES,
     GENERAL_MESSAGES,
     INFO_MESSAGES,
+    PRIORITIES,
     WARNING_MESSAGES,
-    DEPARTMENTS,
 )
 
 logger_config(
@@ -29,6 +34,14 @@ logger_config(
     level=INFO
 )
 logger = getLogger(__name__)
+
+
+class OrderState(Enum):
+    """Состояния диалога создания заявки."""
+    SELECTING_DEPARTMENT = auto()
+    ENTERING_PRODUCT = auto()
+    ENTERING_QUANTITY = auto()
+    SELECTING_PRIORITY = auto()
 
 
 class UserManager:
@@ -126,6 +139,40 @@ class Bot:
 
     def _setup_handlers(self) -> None:
         """Настраивает обработчики команд."""
+        order_handler = ConversationHandler(
+            entry_points=[CommandHandler("order", self.order)],
+            states={
+                OrderState.SELECTING_DEPARTMENT: [
+                    CallbackQueryHandler(
+                        self.department_callback,
+                        pattern="^department_"
+                    )
+                ],
+                OrderState.ENTERING_PRODUCT: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        self.product_callback
+                    )
+                ],
+                OrderState.ENTERING_QUANTITY: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        self.quantity_callback
+                    )
+                ],
+                OrderState.SELECTING_PRIORITY: [
+                    CallbackQueryHandler(
+                        self.priority_callback,
+                        pattern="^priority_"
+                    )
+                ]
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.cancel_order),
+                CommandHandler("order", self.order_in_progress),
+                CommandHandler("help", self.help_command)
+            ]
+        )
         self.application.add_handler(
             CommandHandler("start", self.start)
         )
@@ -135,14 +182,9 @@ class Bot:
         self.application.add_handler(
             CommandHandler("reload_users", self.reload_users)
         )
+        self.application.add_handler(order_handler)
         self.application.add_handler(
-            CommandHandler("order", self.order)
-        )
-        self.application.add_handler(
-            CallbackQueryHandler(
-                self.department_callback,
-                pattern="^department_"
-            )
+            CommandHandler("cancel", self.cancel_not_available)
         )
 
     async def start(
@@ -196,15 +238,14 @@ class Bot:
 
     async def order(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    ) -> OrderState:
         """Обработчик команды /order."""
         user_id = update.effective_user.id
         if not self.user_manager.is_allowed(user_id):
             await update.message.reply_text(
                 GENERAL_MESSAGES['access_denied']
             )
-            return
-
+            return ConversationHandler.END
         keyboard = []
         for dept_id, dept_name in DEPARTMENTS.items():
             keyboard.append([
@@ -213,16 +254,16 @@ class Bot:
                     callback_data=f"department_{dept_id}"
                 )
             ])
-
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
             COMMAND_MESSAGES['order']['select_department'],
             reply_markup=reply_markup
         )
+        return OrderState.SELECTING_DEPARTMENT
 
     async def department_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    ) -> OrderState:
         """Обработчик выбора отдела."""
         query = update.callback_query
         await query.answer()
@@ -231,16 +272,100 @@ class Bot:
             await query.edit_message_text(
                 GENERAL_MESSAGES['access_denied']
             )
-            return
-
-        # Получаем ID отдела из callback_data
+            return ConversationHandler.END
         dept_id = query.data.split('_')[1]
         dept_name = DEPARTMENTS[dept_id]
-
-        # TODO: Здесь будет следующий шаг создания заявки
+        context.user_data['department'] = {
+            'id': dept_id,
+            'name': dept_name
+        }
         await query.edit_message_text(
-            f"Выбран отдел: {dept_name}\n"
+            f"Выбран отдел: {dept_name}\n\n"
+            f"{COMMAND_MESSAGES['order']['enter_product']}"
+        )
+        return OrderState.ENTERING_PRODUCT
+
+    async def product_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> OrderState:
+        """Обработчик ввода информации о товаре."""
+        product_info = update.message.text
+        context.user_data['product'] = product_info
+        await update.message.reply_text(
+            COMMAND_MESSAGES['order']['enter_quantity']
+        )
+        return OrderState.ENTERING_QUANTITY
+
+    async def quantity_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> OrderState:
+        """Обработчик ввода количества товара."""
+        quantity = update.message.text
+        context.user_data['quantity'] = quantity
+        keyboard = []
+        for priority_id, priority_text in PRIORITIES.items():
+            keyboard.append([
+                InlineKeyboardButton(
+                    priority_text,
+                    callback_data=f"priority_{priority_id}"
+                )
+            ])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            COMMAND_MESSAGES['order']['select_priority'],
+            reply_markup=reply_markup
+        )
+        return OrderState.SELECTING_PRIORITY
+
+    async def priority_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> OrderState:
+        """Обработчик выбора приоритета."""
+        query = update.callback_query
+        await query.answer()
+        priority_id = query.data.split('_')[1]
+        priority_text = PRIORITIES[priority_id]
+        context.user_data['priority'] = {
+            'id': priority_id,
+            'text': priority_text
+        }
+        dept_name = context.user_data['department']['name']
+        product_info = context.user_data['product']
+        quantity = context.user_data['quantity']
+        await query.edit_message_text(
+            f"Заявка создана:\n\n"
+            f"Отдел: {dept_name}\n"
+            f"Товар: {product_info}\n"
+            f"Количество: {quantity}\n"
+            f"Приоритет: {priority_text}\n\n"
             "Функционал в разработке..."
+        )
+        return ConversationHandler.END
+
+    async def cancel_order(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> OrderState:
+        """Отмена создания заявки."""
+        await update.message.reply_text(
+            COMMAND_MESSAGES['order']['cancel']
+        )
+        return ConversationHandler.END
+
+    async def order_in_progress(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> OrderState:
+        """Обработчик команды /order во время создания заявки."""
+        await update.message.reply_text(
+            COMMAND_MESSAGES['order']['already_in_progress']
+        )
+        return context.user_data.get('state', OrderState.SELECTING_DEPARTMENT)
+
+    async def cancel_not_available(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Обработчик команды /cancel вне создания заявки."""
+        await update.message.reply_text(
+            GENERAL_MESSAGES['cancel_not_available']
         )
 
     def run(self) -> None:
