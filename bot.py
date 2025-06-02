@@ -353,12 +353,13 @@ class Bot:
 
     async def order_in_progress(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> OrderState:
+    ) -> None:
         """Обработчик команды /order во время создания заявки."""
         await update.message.reply_text(
             COMMAND_MESSAGES['order']['already_in_progress']
         )
-        return context.user_data.get('state', OrderState.SELECTING_DEPARTMENT)
+        # Возвращаем None, чтобы остаться в текущем состоянии
+        return None
 
     async def cancel_not_available(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
