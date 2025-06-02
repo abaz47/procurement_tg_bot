@@ -1,6 +1,7 @@
 """Telegram бот для отправки заявок на закупку."""
 
 from configparser import ConfigParser
+from datetime import datetime
 from enum import Enum, auto
 from logging import INFO, basicConfig as logger_config, getLogger
 from os import getenv
@@ -25,6 +26,7 @@ from messages import (
     ERROR_MESSAGES,
     GENERAL_MESSAGES,
     INFO_MESSAGES,
+    ORDER_TEMPLATE,
     PRIORITIES,
     WARNING_MESSAGES,
 )
@@ -329,18 +331,51 @@ class Bot:
             'id': priority_id,
             'text': priority_text
         }
+        # Собираем данные заявки
+        user = query.from_user
         dept_name = context.user_data['department']['name']
         product_info = context.user_data['product']
         quantity = context.user_data['quantity']
-        await query.edit_message_text(
-            f"Заявка создана:\n\n"
+        current_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+        # Формируем сообщение для пользователя
+        user_message = (
+            f"{INFO_MESSAGES['order_sent_successfully']}\n\n"
             f"Отдел: {dept_name}\n"
             f"Товар: {product_info}\n"
             f"Количество: {quantity}\n"
-            f"Приоритет: {priority_text}\n\n"
-            "Функционал в разработке..."
+            f"Приоритет: {priority_text}"
         )
+        # Формируем сообщение для администраторов
+        order_message = ORDER_TEMPLATE.format(
+            user_name=user.full_name,
+            username=user.username or "не указан",
+            department=dept_name,
+            product=product_info,
+            quantity=quantity,
+            priority=priority_text,
+            date=current_date
+        )
+        # Отправляем заявку администраторам
+        await self._send_order_to_admins(order_message)
+        await query.edit_message_text(user_message)
         return ConversationHandler.END
+
+    async def _send_order_to_admins(self, message: str) -> None:
+        """Отправляет заявку всем администраторам."""
+        for admin_id in self.user_manager.admins:
+            try:
+                await self.application.bot.send_message(
+                    chat_id=admin_id,
+                    text=message,
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                logger.error(
+                    f"{ERROR_MESSAGES['order_send_error'].format(
+                        admin_id=admin_id,
+                        error=e
+                    )}"
+                )
 
     async def cancel_order(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
