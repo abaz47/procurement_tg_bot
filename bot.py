@@ -136,14 +136,14 @@ class Bot:
         self.application = (
             Application.builder()
             .token(token)
-            .connect_timeout(30)
-            .read_timeout(30)
-            .write_timeout(30)
-            .pool_timeout(30)
-            .get_updates_connect_timeout(30)
-            .get_updates_read_timeout(30)
-            .get_updates_write_timeout(30)
-            .get_updates_pool_timeout(30)
+            .connect_timeout(120)
+            .read_timeout(120)
+            .write_timeout(120)
+            .pool_timeout(120)
+            .get_updates_connect_timeout(120)
+            .get_updates_read_timeout(120)
+            .get_updates_write_timeout(120)
+            .get_updates_pool_timeout(120)
             .build()
         )
         logger.info("Настройка обработчиков...")
@@ -185,7 +185,8 @@ class Bot:
                 CommandHandler("cancel", self.cancel_order),
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
-            ]
+            ],
+            per_message=True
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -445,68 +446,16 @@ class Bot:
             except Exception as e:
                 logger.error(f"{ERROR_MESSAGES['message_send_error']}: {e}")
 
-    async def check_bot_connection(self) -> bool:
-        """Проверяет подключение к Telegram API."""
-        try:
-            logger.info("Проверка подключения к Telegram API...")
-            bot_info = await self.application.bot.get_me()
-            logger.info(f"Подключение успешно. Бот: @{bot_info.username}")
-            return True
-        except Exception as e:
-            logger.error(f"Ошибка подключения к Telegram API: {e}")
-            return False
-
-    async def check_and_clear_webhook(self) -> None:
-        """Проверяет и очищает webhook если он установлен."""
-        try:
-            logger.info("Проверка статуса webhook...")
-            webhook_info = await self.application.bot.get_webhook_info()
-            if webhook_info.url:
-                logger.warning(
-                    f"Обнаружен активный webhook: {webhook_info.url}"
-                )
-                logger.info("Удаление webhook...")
-                await self.application.bot.delete_webhook(
-                    drop_pending_updates=True
-                )
-                logger.info("Webhook успешно удален")
-            else:
-                logger.info("Webhook не установлен")
-        except Exception as e:
-            logger.error(f"Ошибка при проверке webhook: {e}")
-
     def run(self) -> None:
         """Запускает бота."""
-        import asyncio
-
-        async def start_bot():
-            """Асинхронный запуск бота."""
-            logger.info("Запуск бота...")
-            # Проверяем подключение
-            if not await self.check_bot_connection():
-                logger.error("Не удалось подключиться к Telegram API")
-                return
-            await self.check_and_clear_webhook()
-            # Запускаем polling
-            logger.info("Начало polling...")
-            await self.application.initialize()
-            await self.application.start()
-            await self.application.updater.start_polling(
-                drop_pending_updates=True
-            )
-            logger.info("Бот запущен успешно. Нажмите Ctrl+C для остановки.")
-            try:
-                await self.application.updater.idle()
-            finally:
-                await self.application.updater.stop()
-                await self.application.stop()
-                await self.application.shutdown()
+        logger.info("Запуск бота...")
         try:
-            asyncio.run(start_bot())
-        except KeyboardInterrupt:
-            logger.info("Получен сигнал остановки")
+            self.application.run_polling(
+                drop_pending_updates=True,
+                close_loop=False
+            )
         except Exception as e:
-            logger.error(f"Ошибка при запуске: {e}")
+            logger.error(f"Ошибка при запуске polling: {e}")
             raise
 
 
