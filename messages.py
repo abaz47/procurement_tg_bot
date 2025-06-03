@@ -44,7 +44,6 @@ GENERAL_MESSAGES = {
     'access_denied': 'У вас нет доступа к этому боту.',
     'cancel_not_available': (
         'Команда /cancel доступна только во время создания заявки. '
-        f'{CANCEL_HINT}'
     ),
     'error_occurred': 'Произошла ошибка. Попробуйте еще раз.'
 }

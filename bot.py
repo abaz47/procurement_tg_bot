@@ -100,7 +100,9 @@ class UserManager:
                         allowed_users.add(user_id)
                     else:
                         logger.warning(
-                            WARNING_MESSAGES['invalid_user_id'].format(key=key)
+                            WARNING_MESSAGES['invalid_user_id'].format(
+                                key=key
+                            )
                         )
             self.admins = admins
             self.allowed_users = allowed_users | admins
@@ -111,7 +113,9 @@ class UserManager:
                 )
             )
         except Exception as e:
-            logger.error(f"{ERROR_MESSAGES['config_error'].format(error=e)}")
+            logger.error(
+                f"{ERROR_MESSAGES['config_error'].format(error=e)}"
+            )
             raise
 
     def is_admin(self, user_id: int) -> bool:
@@ -153,6 +157,10 @@ class Bot:
 
     def _setup_handlers(self) -> None:
         """Настраивает обработчики команд."""
+        self.application.add_handler(
+            MessageHandler(filters.ALL, self.log_all_messages),
+            group=-1  # Выполняется первым
+        )
         order_handler = ConversationHandler(
             entry_points=[CommandHandler("order", self.order)],
             states={
@@ -185,8 +193,7 @@ class Bot:
                 CommandHandler("cancel", self.cancel_order),
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
-            ],
-            per_message=True
+            ]
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -203,9 +210,15 @@ class Bot:
         )
 
     async def start(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Обработчик команды /start."""
+        logger.info(
+            f"Получена команда /start от пользователя "
+            f"{update.effective_user.id}"
+        )
         user_id = update.effective_user.id
         if self.user_manager.is_allowed(user_id):
             await update.message.reply_text(
@@ -220,6 +233,10 @@ class Bot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Обработчик команды /help."""
+        logger.info(
+            f"Получена команда /help от пользователя "
+            f"{update.effective_user.id}"
+        )
         user_id = update.effective_user.id
         if self.user_manager.is_allowed(user_id):
             await update.message.reply_text(
@@ -234,6 +251,10 @@ class Bot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Обработчик команды /reload_users."""
+        logger.info(
+            f"Получена команда /reload_users от пользователя "
+            f"{update.effective_user.id}"
+        )
         user_id = update.effective_user.id
         if not self.user_manager.is_admin(user_id):
             await update.message.reply_text(
@@ -246,7 +267,9 @@ class Bot:
                 COMMAND_MESSAGES['reload_users']['success']
             )
         except Exception as e:
-            logger.error(f"{ERROR_MESSAGES['reload_error'].format(error=e)}")
+            logger.error(
+                f"{ERROR_MESSAGES['reload_error'].format(error=e)}"
+            )
             await update.message.reply_text(
                 COMMAND_MESSAGES['reload_users']['error']
             )
@@ -255,6 +278,10 @@ class Bot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> OrderState:
         """Обработчик команды /order."""
+        logger.info(
+            f"Получена команда /order от пользователя "
+            f"{update.effective_user.id}"
+        )
         user_id = update.effective_user.id
         if not self.user_manager.is_allowed(user_id):
             await update.message.reply_text(
@@ -430,9 +457,13 @@ class Bot:
         from telegram.error import TimedOut, NetworkError
         error = context.error
         if isinstance(error, (TimedOut, NetworkError)):
-            logger.warning(f"{ERROR_MESSAGES['network_error']}: {error}")
+            logger.warning(
+                f"{ERROR_MESSAGES['network_error']}: {error}"
+            )
             return
-        logger.error(f"{ERROR_MESSAGES['unhandled_error']}: {error}")
+        logger.error(
+            f"{ERROR_MESSAGES['unhandled_error']}: {error}"
+        )
         if (
             update
             and hasattr(update, 'effective_chat')
@@ -444,7 +475,24 @@ class Bot:
                     text=GENERAL_MESSAGES['error_occurred']
                 )
             except Exception as e:
-                logger.error(f"{ERROR_MESSAGES['message_send_error']}: {e}")
+                logger.error(
+                    f"{ERROR_MESSAGES['message_send_error']}: {e}"
+                )
+
+    async def log_all_messages(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Логирует все входящие сообщения для диагностики."""
+        if update.message:
+            logger.info(
+                f"Получено сообщение от пользователя "
+                f"{update.effective_user.id}: '{update.message.text}'"
+            )
+        elif update.callback_query:
+            logger.info(
+                f"Получен callback от пользователя "
+                f"{update.effective_user.id}: '{update.callback_query.data}'"
+            )
 
     def run(self) -> None:
         """Запускает бота."""
@@ -475,7 +523,9 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.info("Бот остановлен пользователем")
     except Exception as e:
-        logger.error(f"{ERROR_MESSAGES['bot_start_error'].format(error=e)}")
+        logger.error(
+            f"{ERROR_MESSAGES['bot_start_error'].format(error=e)}"
+        )
         sys_exit(1)
     finally:
         logger.info("Завершение работы бота")
