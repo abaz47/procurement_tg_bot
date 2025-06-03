@@ -462,9 +462,13 @@ class Bot:
             logger.info("Проверка статуса webhook...")
             webhook_info = await self.application.bot.get_webhook_info()
             if webhook_info.url:
-                logger.warning(f"Обнаружен активный webhook: {webhook_info.url}")
+                logger.warning(
+                    f"Обнаружен активный webhook: {webhook_info.url}"
+                )
                 logger.info("Удаление webhook...")
-                await self.application.bot.delete_webhook(drop_pending_updates=True)
+                await self.application.bot.delete_webhook(
+                    drop_pending_updates=True
+                )
                 logger.info("Webhook успешно удален")
             else:
                 logger.info("Webhook не установлен")
@@ -474,25 +478,29 @@ class Bot:
     def run(self) -> None:
         """Запускает бота."""
         import asyncio
-        
+
         async def start_bot():
             """Асинхронный запуск бота."""
             logger.info("Запуск бота...")
-            async with self.application:
-                # Проверяем подключение
-                if not await self.check_bot_connection():
-                    logger.error("Не удалось подключиться к Telegram API")
-                    return
-                
-                await self.check_and_clear_webhook()
-                logger.info("Начало polling...")
-                await self.application.start()
-                await self.application.updater.start_polling(
-                    drop_pending_updates=True
-                )
-                logger.info("Бот запущен успешно. Нажмите Ctrl+C для остановки.")
+            # Проверяем подключение
+            if not await self.check_bot_connection():
+                logger.error("Не удалось подключиться к Telegram API")
+                return
+            await self.check_and_clear_webhook()
+            # Запускаем polling
+            logger.info("Начало polling...")
+            await self.application.initialize()
+            await self.application.start()
+            await self.application.updater.start_polling(
+                drop_pending_updates=True
+            )
+            logger.info("Бот запущен успешно. Нажмите Ctrl+C для остановки.")
+            try:
                 await self.application.updater.idle()
-        
+            finally:
+                await self.application.updater.stop()
+                await self.application.stop()
+                await self.application.shutdown()
         try:
             asyncio.run(start_bot())
         except KeyboardInterrupt:
@@ -509,7 +517,7 @@ def main() -> None:
     if not token:
         logger.error(ERROR_MESSAGES['no_token'])
         sys_exit(1)
-    
+
     logger.info("Инициализация бота...")
     bot = Bot(token)
     try:
