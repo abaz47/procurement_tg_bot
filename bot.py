@@ -135,14 +135,14 @@ class Bot:
         self.application = (
             Application.builder()
             .token(token)
-            .connect_timeout(60)
-            .read_timeout(60)
-            .write_timeout(60)
-            .pool_timeout(60)
-            .get_updates_connect_timeout(60)
-            .get_updates_read_timeout(60)
-            .get_updates_write_timeout(60)
-            .get_updates_pool_timeout(60)
+            .connect_timeout(120)
+            .read_timeout(120)
+            .write_timeout(120)
+            .pool_timeout(120)
+            .get_updates_connect_timeout(120)
+            .get_updates_read_timeout(120)
+            .get_updates_write_timeout(120)
+            .get_updates_pool_timeout(120)
             .build()
         )
         self._setup_handlers()
@@ -424,16 +424,11 @@ class Bot:
     ) -> None:
         """Обработчик ошибок."""
         from telegram.error import TimedOut, NetworkError
-
-        NETWORK_ERROR_MESSAGE = "Cетевая ошибка"
-        UNHANDLED_ERROR_MESSAGE = "Необработанная ошибка"
-        UNSEND_ERROR_MESSAGE = "Не удалось отправить сообщение об ошибке"
-
         error = context.error
         if isinstance(error, (TimedOut, NetworkError)):
-            logger.warning(f"{NETWORK_ERROR_MESSAGE}: {error}")
+            logger.warning(f"{ERROR_MESSAGES['network_error']}: {error}")
             return
-        logger.error(f"{UNHANDLED_ERROR_MESSAGE}: {error}")
+        logger.error(f"{ERROR_MESSAGES['unhandled_error']}: {error}")
         if (
             update
             and hasattr(update, 'effective_chat')
@@ -445,7 +440,7 @@ class Bot:
                     text=GENERAL_MESSAGES['error_occurred']
                 )
             except Exception as e:
-                logger.error(f"{UNSEND_ERROR_MESSAGE}: {e}")
+                logger.error(f"{ERROR_MESSAGES['message_send_error']}: {e}")
 
     async def initialize_and_run(self) -> None:
         """Инициализирует и запускает бота."""
