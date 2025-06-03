@@ -135,14 +135,14 @@ class Bot:
         self.application = (
             Application.builder()
             .token(token)
-            .connect_timeout(120)
-            .read_timeout(120)
-            .write_timeout(120)
-            .pool_timeout(120)
-            .get_updates_connect_timeout(120)
-            .get_updates_read_timeout(120)
-            .get_updates_write_timeout(120)
-            .get_updates_pool_timeout(120)
+            .connect_timeout(30)
+            .read_timeout(30)
+            .write_timeout(30)
+            .pool_timeout(30)
+            .get_updates_connect_timeout(30)
+            .get_updates_read_timeout(30)
+            .get_updates_write_timeout(30)
+            .get_updates_pool_timeout(30)
             .build()
         )
         self._setup_handlers()
@@ -182,7 +182,8 @@ class Bot:
                 CommandHandler("cancel", self.cancel_order),
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
-            ]
+            ],
+            per_message=False
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -442,20 +443,17 @@ class Bot:
             except Exception as e:
                 logger.error(f"{ERROR_MESSAGES['message_send_error']}: {e}")
 
-    async def initialize_and_run(self) -> None:
-        """Инициализирует и запускает бота."""
-        async with self.application:
-            await self.application.start()
-            await self.application.updater.start_polling(
-                drop_pending_updates=True
-            )
-            logger.info("Бот запущен. Нажмите Ctrl+C для остановки.")
-            await self.application.updater.idle()
-
     def run(self) -> None:
         """Запускает бота."""
-        import asyncio
-        asyncio.run(self.initialize_and_run())
+        logger.info("Запуск бота...")
+        try:
+            self.application.run_polling(
+                drop_pending_updates=True,
+                close_loop=False
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при запуске polling: {e}")
+            raise
 
 
 def main() -> None:
