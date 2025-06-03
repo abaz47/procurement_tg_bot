@@ -132,8 +132,21 @@ class Bot:
 
     def __init__(self, token: str):
         self.user_manager = UserManager()
-        self.application = Application.builder().token(token).build()
+        self.application = (
+            Application.builder()
+            .token(token)
+            .connect_timeout(60)
+            .read_timeout(60)
+            .write_timeout(60)
+            .pool_timeout(60)
+            .get_updates_connect_timeout(60)
+            .get_updates_read_timeout(60)
+            .get_updates_write_timeout(60)
+            .get_updates_pool_timeout(60)
+            .build()
+        )
         self._setup_handlers()
+        self._setup_error_handler()
 
     def _setup_handlers(self) -> None:
         """Настраивает обработчики команд."""
@@ -399,6 +412,40 @@ class Bot:
         await update.message.reply_text(
             GENERAL_MESSAGES['cancel_not_available']
         )
+
+    def _setup_error_handler(self) -> None:
+        """Настраивает обработчик ошибок."""
+        self.application.add_error_handler(self.error_handler)
+
+    async def error_handler(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Обработчик ошибок."""
+        from telegram.error import TimedOut, NetworkError
+
+        NETWORK_ERROR_MESSAGE = "Cетевая ошибка"
+        UNHANDLED_ERROR_MESSAGE = "Необработанная ошибка"
+        UNSEND_ERROR_MESSAGE = "Не удалось отправить сообщение об ошибке"
+
+        error = context.error
+        if isinstance(error, (TimedOut, NetworkError)):
+            logger.warning(f"{NETWORK_ERROR_MESSAGE}: {error}")
+            return
+        logger.error(f"{UNHANDLED_ERROR_MESSAGE}: {error}")
+        if (
+            update
+            and hasattr(update, 'effective_chat')
+            and update.effective_chat
+        ):
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=GENERAL_MESSAGES['error_occurred']
+                )
+            except Exception as e:
+                logger.error(f"{UNSEND_ERROR_MESSAGE}: {e}")
 
     async def initialize_and_run(self) -> None:
         """Инициализирует и запускает бота."""
