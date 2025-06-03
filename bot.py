@@ -445,12 +445,61 @@ class Bot:
             except Exception as e:
                 logger.error(f"{ERROR_MESSAGES['message_send_error']}: {e}")
 
+    async def check_bot_connection(self) -> bool:
+        """Проверяет подключение к Telegram API."""
+        try:
+            logger.info("Проверка подключения к Telegram API...")
+            bot_info = await self.application.bot.get_me()
+            logger.info(f"Подключение успешно. Бот: @{bot_info.username}")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка подключения к Telegram API: {e}")
+            return False
+
+    async def check_and_clear_webhook(self) -> None:
+        """Проверяет и очищает webhook если он установлен."""
+        try:
+            logger.info("Проверка статуса webhook...")
+            webhook_info = await self.application.bot.get_webhook_info()
+            if webhook_info.url:
+                logger.warning(f"Обнаружен активный webhook: {webhook_info.url}")
+                logger.info("Удаление webhook...")
+                await self.application.bot.delete_webhook(drop_pending_updates=True)
+                logger.info("Webhook успешно удален")
+            else:
+                logger.info("Webhook не установлен")
+        except Exception as e:
+            logger.error(f"Ошибка при проверке webhook: {e}")
+
     def run(self) -> None:
         """Запускает бота."""
-        logger.info("Запуск бота...")
-        self.application.run_polling(
-            drop_pending_updates=True
-        )
+        import asyncio
+        
+        async def start_bot():
+            """Асинхронный запуск бота."""
+            logger.info("Запуск бота...")
+            async with self.application:
+                # Проверяем подключение
+                if not await self.check_bot_connection():
+                    logger.error("Не удалось подключиться к Telegram API")
+                    return
+                
+                await self.check_and_clear_webhook()
+                logger.info("Начало polling...")
+                await self.application.start()
+                await self.application.updater.start_polling(
+                    drop_pending_updates=True
+                )
+                logger.info("Бот запущен успешно. Нажмите Ctrl+C для остановки.")
+                await self.application.updater.idle()
+        
+        try:
+            asyncio.run(start_bot())
+        except KeyboardInterrupt:
+            logger.info("Получен сигнал остановки")
+        except Exception as e:
+            logger.error(f"Ошибка при запуске: {e}")
+            raise
 
 
 def main() -> None:
