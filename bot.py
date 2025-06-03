@@ -169,7 +169,8 @@ class Bot:
                 CommandHandler("cancel", self.cancel_order),
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
-            ]
+            ],
+            per_message=False
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -400,18 +401,13 @@ class Bot:
             GENERAL_MESSAGES['cancel_not_available']
         )
 
-    async def run_async(self) -> None:
-        """Асинхронный запуск бота."""
-        async with self.application:
-            await self.application.start()
-            await self.application.updater.start_polling()
-            logger.info("Бот запущен. Нажмите Ctrl+C для остановки.")
-            await self.application.updater.idle()
-
     def run(self) -> None:
         """Запускает бота."""
-        import asyncio
-        asyncio.run(self.run_async())
+        logger.info("Бот запущен. Нажмите Ctrl+C для остановки.")
+        self.application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True
+        )
 
 
 def main() -> None:
