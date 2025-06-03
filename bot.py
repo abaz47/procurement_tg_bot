@@ -86,9 +86,9 @@ class UserManager:
                         admins.add(user_id)
                     else:
                         logger.warning(
-                            f"{WARNING_MESSAGES[
-                                'invalid_admin_id'
-                            ].format(key=key)}"
+                            WARNING_MESSAGES['invalid_admin_id'].format(
+                                key=key
+                            )
                         )
             if not admins:
                 raise ValueError(ERROR_MESSAGES['no_admins'])
@@ -100,19 +100,15 @@ class UserManager:
                         allowed_users.add(user_id)
                     else:
                         logger.warning(
-                            f"{WARNING_MESSAGES[
-                                'invalid_user_id'
-                            ].format(key=key)}"
+                            WARNING_MESSAGES['invalid_user_id'].format(key=key)
                         )
             self.admins = admins
             self.allowed_users = allowed_users | admins
             logger.info(
-                f"{INFO_MESSAGES[
-                    'users_loaded'
-                ].format(
+                INFO_MESSAGES['users_loaded'].format(
                     admins_count=len(admins),
                     users_count=len(allowed_users)
-                )}"
+                )
             )
         except Exception as e:
             logger.error(f"{ERROR_MESSAGES['config_error'].format(error=e)}")
