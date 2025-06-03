@@ -132,19 +132,7 @@ class Bot:
 
     def __init__(self, token: str):
         self.user_manager = UserManager()
-        self.application = (
-            Application.builder()
-            .token(token)
-            .connect_timeout(30)
-            .read_timeout(30)
-            .write_timeout(30)
-            .pool_timeout(30)
-            .get_updates_connect_timeout(30)
-            .get_updates_read_timeout(30)
-            .get_updates_write_timeout(30)
-            .get_updates_pool_timeout(30)
-            .build()
-        )
+        self.application = Application.builder().token(token).build()
         self._setup_handlers()
 
     def _setup_handlers(self) -> None:
@@ -181,10 +169,7 @@ class Bot:
                 CommandHandler("cancel", self.cancel_order),
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
-            ],
-            per_message=False,
-            per_chat=False,
-            per_user=False
+            ]
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -418,15 +403,7 @@ class Bot:
     def run(self) -> None:
         """Запускает бота."""
         logger.info("Бот запущен. Нажмите Ctrl+C для остановки.")
-        try:
-            self.application.run_polling(
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-                close_loop=False
-            )
-        except Exception as e:
-            logger.error(f"Ошибка во время работы бота: {e}")
-            raise
+        self.application.run_polling(drop_pending_updates=True)
 
 
 def main() -> None:
