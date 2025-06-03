@@ -193,7 +193,8 @@ class Bot:
                 CommandHandler("cancel", self.cancel_order),
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
-            ]
+            ],
+            per_message=False
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -497,14 +498,9 @@ class Bot:
     def run(self) -> None:
         """Запускает бота."""
         logger.info("Запуск бота...")
-        try:
-            self.application.run_polling(
-                drop_pending_updates=True,
-                close_loop=False
-            )
-        except Exception as e:
-            logger.error(f"Ошибка при запуске polling: {e}")
-            raise
+        self.application.run_polling(
+            drop_pending_updates=True
+        )
 
 
 def main() -> None:
@@ -516,19 +512,15 @@ def main() -> None:
         sys_exit(1)
 
     logger.info("Инициализация бота...")
-    bot = Bot(token)
     try:
+        bot = Bot(token)
         logger.info("Запуск polling...")
         bot.run()
     except KeyboardInterrupt:
         logger.info("Бот остановлен пользователем")
     except Exception as e:
-        logger.error(
-            f"{ERROR_MESSAGES['bot_start_error'].format(error=e)}"
-        )
+        logger.error(f"{ERROR_MESSAGES['bot_start_error'].format(error=e)}")
         sys_exit(1)
-    finally:
-        logger.info("Завершение работы бота")
 
 
 if __name__ == '__main__':
