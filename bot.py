@@ -367,10 +367,10 @@ class Bot:
                 )
             except Exception as e:
                 logger.error(
-                    f"{ERROR_MESSAGES['order_send_error'].format(
+                    ERROR_MESSAGES['order_send_error'].format(
                         admin_id=admin_id,
                         error=e
-                    )}"
+                    )
                 )
 
     async def cancel_order(
