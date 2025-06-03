@@ -400,10 +400,20 @@ class Bot:
             GENERAL_MESSAGES['cancel_not_available']
         )
 
+    async def initialize_and_run(self) -> None:
+        """Инициализирует и запускает бота."""
+        async with self.application:
+            await self.application.start()
+            await self.application.updater.start_polling(
+                drop_pending_updates=True
+            )
+            logger.info("Бот запущен. Нажмите Ctrl+C для остановки.")
+            await self.application.updater.idle()
+
     def run(self) -> None:
         """Запускает бота."""
-        logger.info("Бот запущен. Нажмите Ctrl+C для остановки.")
-        self.application.run_polling(drop_pending_updates=True)
+        import asyncio
+        asyncio.run(self.initialize_and_run())
 
 
 def main() -> None:
