@@ -5,6 +5,7 @@ services:
     build: .
     container_name: procurement-tg-bot
     restart: unless-stopped
+    network_mode: host
     volumes:
       - ./users.cfg:/app/users.cfg
       - ./logs:/app/logs
