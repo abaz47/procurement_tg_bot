@@ -496,7 +496,7 @@ class Bot:
             )
             logger.info("Бот запущен успешно. Нажмите Ctrl+C для остановки.")
             try:
-                await self.application.updater.idle()
+                await self.application.idle()
             finally:
                 await self.application.updater.stop()
                 await self.application.stop()
