@@ -191,9 +191,9 @@ class Bot:
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
             ],
-            per_message=False,
             per_chat=True,
-            per_user=False
+            per_user=False,
+            per_message=True
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -472,12 +472,7 @@ class Bot:
         self.application.run_polling(
             drop_pending_updates=True,
             poll_interval=1.0,
-            timeout=10,
-            bootstrap_retries=3,
-            read_timeout=10,
-            write_timeout=10,
-            connect_timeout=10,
-            pool_timeout=10
+            timeout=10
         )
 
 
