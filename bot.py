@@ -496,7 +496,11 @@ class Bot:
             )
             logger.info("Бот запущен успешно. Нажмите Ctrl+C для остановки.")
             try:
-                await self.application.idle()
+                # Бесконечный цикл для поддержания работы бота
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                logger.info("Получен сигнал остановки")
             finally:
                 await self.application.updater.stop()
                 await self.application.stop()
