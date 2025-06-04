@@ -133,7 +133,6 @@ class UserManager:
 
 class Bot:
     """Класс бота."""
-    TIMEOUT = 10
 
     def __init__(self, token: str):
         self.user_manager = UserManager()
@@ -141,14 +140,6 @@ class Bot:
         self.application = (
             Application.builder()
             .token(token)
-            .connect_timeout(self.TIMEOUT)
-            .read_timeout(self.TIMEOUT)
-            .write_timeout(self.TIMEOUT)
-            .pool_timeout(self.TIMEOUT)
-            .get_updates_connect_timeout(self.TIMEOUT)
-            .get_updates_read_timeout(self.TIMEOUT)
-            .get_updates_write_timeout(self.TIMEOUT)
-            .get_updates_pool_timeout(self.TIMEOUT)
             .build()
         )
         logger.info("Настройка обработчиков...")
@@ -191,9 +182,7 @@ class Bot:
                 CommandHandler("order", self.order_in_progress),
                 CommandHandler("help", self.help_command)
             ],
-            per_chat=True,
-            per_user=False,
-            per_message=True
+            per_message=False
         )
         self.application.add_handler(
             CommandHandler("start", self.start)
@@ -470,9 +459,7 @@ class Bot:
         """Запускает бота."""
         logger.info("Запуск бота...")
         self.application.run_polling(
-            drop_pending_updates=True,
-            poll_interval=1.0,
-            timeout=10
+            drop_pending_updates=True
         )
 
 
