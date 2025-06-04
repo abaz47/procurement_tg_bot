@@ -44,6 +44,7 @@ class OrderState(Enum):
     ENTERING_PRODUCT = auto()
     ENTERING_QUANTITY = auto()
     SELECTING_PRIORITY = auto()
+    CONFIRMING_ORDER = auto()
 
 
 class UserManager:
@@ -130,6 +131,10 @@ class UserManager:
         """Перезагружает списки пользователей из файла конфигурации."""
         self._load_users()
 
+    def get_admin_ids(self) -> Set[int]:
+        """Возвращает множество ID администраторов."""
+        return self.admins.copy()
+
 
 class Bot:
     """Класс бота."""
@@ -137,9 +142,18 @@ class Bot:
     def __init__(self, token: str):
         self.user_manager = UserManager()
         logger.info("Создание Application...")
+        # Увеличенные таймауты для нестабильной сети
         self.application = (
             Application.builder()
             .token(token)
+            .connect_timeout(30)  # Увеличено для медленного соединения
+            .read_timeout(30)     # Время ожидания ответа
+            .write_timeout(30)    # Время отправки данных
+            .pool_timeout(30)     # Таймаут пула соединений
+            .get_updates_connect_timeout(30)
+            .get_updates_read_timeout(30)
+            .get_updates_write_timeout(30)
+            .get_updates_pool_timeout(30)
             .build()
         )
         logger.info("Настройка обработчиков...")
@@ -150,50 +164,53 @@ class Bot:
     def _setup_handlers(self) -> None:
         """Настраивает обработчики команд."""
         order_handler = ConversationHandler(
-            entry_points=[CommandHandler("order", self.order)],
+            entry_points=[CommandHandler("order", self.order_command)],
             states={
                 OrderState.SELECTING_DEPARTMENT: [
                     CallbackQueryHandler(
-                        self.department_callback,
-                        pattern="^department_"
+                        self.department_selected,
+                        pattern="^dept_"
                     )
                 ],
                 OrderState.ENTERING_PRODUCT: [
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND,
-                        self.product_callback
+                        self.product_entered
                     )
                 ],
                 OrderState.ENTERING_QUANTITY: [
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND,
-                        self.quantity_callback
+                        self.quantity_entered
                     )
                 ],
                 OrderState.SELECTING_PRIORITY: [
                     CallbackQueryHandler(
-                        self.priority_callback,
+                        self.priority_selected,
                         pattern="^priority_"
+                    )
+                ],
+                OrderState.CONFIRMING_ORDER: [
+                    CallbackQueryHandler(
+                        self.confirm_order,
+                        pattern="^confirm_"
                     )
                 ]
             },
             fallbacks=[
-                CommandHandler("cancel", self.cancel_order),
-                CommandHandler("order", self.order_in_progress),
-                CommandHandler("help", self.help_command)
+                CommandHandler("cancel", self.cancel_command)
             ],
             per_message=False
         )
-        self.application.add_handler(
-            CommandHandler("start", self.start)
-        )
-        self.application.add_handler(
-            CommandHandler("help", self.help_command)
-        )
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(
             CommandHandler("reload_users", self.reload_users)
         )
         self.application.add_handler(order_handler)
+        self.application.add_handler(
+            CommandHandler("order", self.order_in_progress)
+        )
         self.application.add_handler(
             CommandHandler("cancel", self.cancel_not_available)
         )
@@ -204,30 +221,33 @@ class Bot:
         context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Обработчик команды /start."""
-        user_id = update.effective_user.id
-        logger.info(f"Команда /start от пользователя {user_id}")
-        if self.user_manager.is_allowed(user_id):
-            await update.message.reply_text(
-                COMMAND_MESSAGES['start']['allowed']
+        if not self.user_manager.is_allowed(update.effective_user.id):
+            await self._send_message_with_retry(
+                update.effective_chat.id,
+                GENERAL_MESSAGES['access_denied']
             )
-        else:
-            await update.message.reply_text(
-                COMMAND_MESSAGES['start']['not_allowed']
-            )
+            return
+
+        await self._send_message_with_retry(
+            update.effective_chat.id,
+            COMMAND_MESSAGES['start']['allowed']
+        )
 
     async def help_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Обработчик команды /help."""
-        user_id = update.effective_user.id
-        if self.user_manager.is_allowed(user_id):
-            await update.message.reply_text(
-                COMMAND_MESSAGES['help']['commands']
-            )
-        else:
-            await update.message.reply_text(
+        if not self.user_manager.is_allowed(update.effective_user.id):
+            await self._send_message_with_retry(
+                update.effective_chat.id,
                 GENERAL_MESSAGES['access_denied']
             )
+            return
+
+        await self._send_message_with_retry(
+            update.effective_chat.id,
+            COMMAND_MESSAGES['help']['commands']
+        )
 
     async def reload_users(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -241,7 +261,9 @@ class Bot:
             return
         try:
             self.user_manager.reload_users()
-            logger.info(f"Пользователи перезагружены администратором {user_id}")
+            logger.info(
+                f"Пользователи перезагружены администратором {user_id}"
+            )
             await update.message.reply_text(
                 COMMAND_MESSAGES['reload_users']['success']
             )
@@ -253,171 +275,218 @@ class Bot:
                 COMMAND_MESSAGES['reload_users']['error']
             )
 
-    async def order(
+    async def order_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> OrderState:
         """Обработчик команды /order."""
-        user_id = update.effective_user.id
-        logger.info(f"Команда /order от пользователя {user_id}")
-        if not self.user_manager.is_allowed(user_id):
-            await update.message.reply_text(
+        if not self.user_manager.is_allowed(update.effective_user.id):
+            await self._send_message_with_retry(
+                update.effective_chat.id,
                 GENERAL_MESSAGES['access_denied']
             )
             return ConversationHandler.END
+
+        # Проверяем, есть ли уже активный заказ
+        if context.user_data.get('order_in_progress'):
+            await self._send_message_with_retry(
+                update.effective_chat.id,
+                COMMAND_MESSAGES['order']['already_in_progress']
+            )
+            return ConversationHandler.END
+        # Отмечаем, что заказ начат
+        context.user_data['order_in_progress'] = True
+        # Создаем клавиатуру с отделами
         keyboard = []
         for dept_id, dept_name in DEPARTMENTS.items():
             keyboard.append([
                 InlineKeyboardButton(
                     dept_name,
-                    callback_data=f"department_{dept_id}"
+                    callback_data=f"dept_{dept_id}"
                 )
             ])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
+        await self._send_message_with_retry(
+            update.effective_chat.id,
             COMMAND_MESSAGES['order']['select_department'],
             reply_markup=reply_markup
         )
         return OrderState.SELECTING_DEPARTMENT
 
-    async def department_callback(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> OrderState:
+    async def department_selected(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
         """Обработчик выбора отдела."""
         query = update.callback_query
         await query.answer()
-
-        if not self.user_manager.is_allowed(query.from_user.id):
-            await query.edit_message_text(
-                GENERAL_MESSAGES['access_denied']
-            )
-            return ConversationHandler.END
-        dept_id = query.data.split('_')[1]
-        dept_name = DEPARTMENTS[dept_id]
-        context.user_data['department'] = {
-            'id': dept_id,
-            'name': dept_name
-        }
-        await query.edit_message_text(
-            f"Выбран отдел: {dept_name}\n\n"
-            f"{COMMAND_MESSAGES['order']['enter_product']}"
+        dept_id = query.data.replace("dept_", "")
+        context.user_data['department'] = dept_id
+        await self._send_message_with_retry(
+            query.message.chat_id,
+            COMMAND_MESSAGES['order']['enter_product']
         )
         return OrderState.ENTERING_PRODUCT
 
-    async def product_callback(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> OrderState:
-        """Обработчик ввода информации о товаре."""
-        product_info = update.message.text
-        context.user_data['product'] = product_info
-        await update.message.reply_text(
+    async def product_entered(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обработчик ввода товара."""
+        product = update.message.text.strip()
+        context.user_data['product'] = product
+
+        await self._send_message_with_retry(
+            update.effective_chat.id,
             COMMAND_MESSAGES['order']['enter_quantity']
         )
         return OrderState.ENTERING_QUANTITY
 
-    async def quantity_callback(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> OrderState:
-        """Обработчик ввода количества товара."""
-        quantity = update.message.text
+    async def quantity_entered(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обработчик ввода количества."""
+        quantity = update.message.text.strip()
         context.user_data['quantity'] = quantity
-        keyboard = []
-        for priority_id, priority_text in PRIORITIES.items():
-            keyboard.append([
-                InlineKeyboardButton(
-                    priority_text,
-                    callback_data=f"priority_{priority_id}"
-                )
-            ])
+
+        # Создаем клавиатуру с приоритетами
+        keyboard = [
+            [InlineKeyboardButton(name, callback_data=f"priority_{key}")]
+            for key, name in PRIORITIES.items()
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
+        await self._send_message_with_retry(
+            update.effective_chat.id,
             COMMAND_MESSAGES['order']['select_priority'],
             reply_markup=reply_markup
         )
         return OrderState.SELECTING_PRIORITY
 
-    async def priority_callback(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> OrderState:
+    async def priority_selected(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
         """Обработчик выбора приоритета."""
         query = update.callback_query
         await query.answer()
-        priority_id = query.data.split('_')[1]
-        priority_text = PRIORITIES[priority_id]
-        context.user_data['priority'] = {
-            'id': priority_id,
-            'text': priority_text
-        }
-        # Собираем данные заявки
-        user = query.from_user
-        dept_name = context.user_data['department']['name']
-        product_info = context.user_data['product']
-        quantity = context.user_data['quantity']
-        current_date = datetime.now().strftime("%d.%m.%Y %H:%M")
-        # Формируем сообщение для пользователя
-        user_message = (
-            f"{INFO_MESSAGES['order_sent_successfully']}\n\n"
-            f"Отдел: {dept_name}\n"
-            f"Товар: {product_info}\n"
-            f"Количество: {quantity}\n"
-            f"Приоритет: {priority_text}"
+        priority_key = query.data.replace("priority_", "")
+        context.user_data['priority'] = priority_key
+        order_data = context.user_data
+        confirmation_text = COMMAND_MESSAGES['order']['confirmation'].format(
+            department=DEPARTMENTS[order_data['department']],
+            product=order_data['product'],
+            quantity=order_data['quantity'],
+            priority=PRIORITIES[order_data['priority']]
         )
-        # Формируем сообщение для администраторов
-        order_message = ORDER_TEMPLATE.format(
-            user_name=user.full_name,
-            username=user.username or "не указан",
-            department=dept_name,
-            product=product_info,
-            quantity=quantity,
-            priority=priority_text,
-            date=current_date
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "Подтвердить", callback_data="confirm_yes"
+                ),
+                InlineKeyboardButton(
+                    "Отменить", callback_data="confirm_no"
+                )
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await self._send_message_with_retry(
+            query.message.chat_id,
+            confirmation_text,
+            reply_markup=reply_markup
         )
-        # Отправляем заявку администраторам
-        await self._send_order_to_admins(order_message)
-        await query.edit_message_text(user_message)
+        return OrderState.CONFIRMING_ORDER
+
+    async def confirm_order(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обработчик подтверждения заказа."""
+        query = update.callback_query
+        await query.answer()
+        if query.data == "confirm_yes":
+            user = query.from_user
+            order_data = context.user_data
+            current_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+            order_message = ORDER_TEMPLATE.format(
+                user_name=user.full_name,
+                username=user.username or "не указан",
+                department=DEPARTMENTS[order_data['department']],
+                product=order_data['product'],
+                quantity=order_data['quantity'],
+                priority=PRIORITIES[order_data['priority']],
+                date=current_date
+            )
+            await self._send_order_to_admins(order_message)
+            await self._send_message_with_retry(
+                query.message.chat_id,
+                COMMAND_MESSAGES['order']['success']
+            )
+        else:
+            await self._send_message_with_retry(
+                query.message.chat_id,
+                COMMAND_MESSAGES['order']['cancelled']
+            )
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    async def cancel_command(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обработчик команды /cancel."""
+        if not self.user_manager.is_allowed(update.effective_user.id):
+            await self._send_message_with_retry(
+                update.effective_chat.id,
+                GENERAL_MESSAGES['access_denied']
+            )
+            return ConversationHandler.END
+        if not context.user_data.get('order_in_progress'):
+            await self._send_message_with_retry(
+                update.effective_chat.id,
+                COMMAND_MESSAGES['cancel']['not_available']
+            )
+            return ConversationHandler.END
+        context.user_data.clear()
+        await self._send_message_with_retry(
+            update.effective_chat.id,
+            COMMAND_MESSAGES['cancel']['success']
+        )
         return ConversationHandler.END
 
     async def _send_order_to_admins(self, message: str) -> None:
         """Отправляет заявку всем администраторам."""
-        for admin_id in self.user_manager.admins:
+        admin_ids = self.user_manager.get_admin_ids()
+        for admin_id in admin_ids:
             try:
-                await self.application.bot.send_message(
-                    chat_id=admin_id,
-                    text=message,
-                    parse_mode='HTML'
-                )
+                await self._send_message_with_retry(admin_id, message)
+                logger.info(f"Заявка отправлена администратору {admin_id}")
             except Exception as e:
                 logger.error(
-                    ERROR_MESSAGES['order_send_error'].format(
-                        admin_id=admin_id,
-                        error=e
-                    )
+                    f"Ошибка отправки заявки администратору {admin_id}: {e}"
                 )
-
-    async def cancel_order(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> OrderState:
-        """Отмена создания заявки."""
-        await update.message.reply_text(
-            COMMAND_MESSAGES['order']['cancel']
-        )
-        return ConversationHandler.END
 
     async def order_in_progress(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Обработчик команды /order во время создания заявки."""
-        await update.message.reply_text(
+        await self._send_message_with_retry(
+            update.effective_chat.id,
             COMMAND_MESSAGES['order']['already_in_progress']
         )
-        # Возвращаем None, чтобы остаться в текущем состоянии
-        return None
 
     async def cancel_not_available(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Обработчик команды /cancel вне создания заявки."""
-        await update.message.reply_text(
-            GENERAL_MESSAGES['cancel_not_available']
+        await self._send_message_with_retry(
+            update.effective_chat.id,
+            COMMAND_MESSAGES['cancel']['not_available']
         )
 
     def _setup_error_handler(self) -> None:
@@ -429,21 +498,24 @@ class Bot:
         update: Update,
         context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Обработчик ошибок."""
-        from telegram.error import TimedOut, NetworkError
+        """Обработчик ошибок с retry механизмом."""
+        from telegram.error import TimedOut, NetworkError, RetryAfter
         error = context.error
-        if isinstance(error, (TimedOut, NetworkError)):
-            logger.warning(
-                f"{ERROR_MESSAGES['network_error']}: {error}"
-            )
+        # Обработка различных типов ошибок
+        if isinstance(error, RetryAfter):
+            logger.warning(f"Rate limit: ждем {error.retry_after} секунд")
             return
-        logger.error(
-            f"{ERROR_MESSAGES['unhandled_error']}: {error}"
-        )
+        if isinstance(error, (TimedOut, NetworkError)):
+            logger.warning(f"Сетевая ошибка: {error}")
+            return
+        # Логируем неизвестные ошибки
+        logger.error(f"Необработанная ошибка: {error}")
+        # Пытаемся уведомить пользователя только при критических ошибках
         if (
             update
             and hasattr(update, 'effective_chat')
             and update.effective_chat
+            and not isinstance(error, (TimedOut, NetworkError, RetryAfter))
         ):
             try:
                 await context.bot.send_message(
@@ -451,15 +523,64 @@ class Bot:
                     text=GENERAL_MESSAGES['error_occurred']
                 )
             except Exception as e:
-                logger.error(
-                    f"{ERROR_MESSAGES['message_send_error']}: {e}"
+                logger.error(f"Не удалось отправить сообщение об ошибке: {e}")
+
+    async def _send_message_with_retry(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup=None,
+        max_retries: int = 3
+    ):
+        """Отправляет сообщение с повторными попытками при ошибках."""
+        from telegram.error import TimedOut, NetworkError, RetryAfter
+        import asyncio
+
+        for attempt in range(max_retries):
+            try:
+                if reply_markup:
+                    return await self.application.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=reply_markup
+                    )
+                else:
+                    return await self.application.bot.send_message(
+                        chat_id=chat_id,
+                        text=text
+                    )
+            except RetryAfter as e:
+                logger.warning(f"Rate limit, ждем {e.retry_after} секунд")
+                await asyncio.sleep(e.retry_after)
+                continue
+            except (TimedOut, NetworkError) as e:
+                logger.warning(
+                    f"Сетевая ошибка при отправке сообщения "
+                    f"(попытка {attempt + 1}/{max_retries}): {e}"
                 )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                else:
+                    logger.error(
+                        f"Не удалось отправить сообщение "
+                        f"после {max_retries} попыток"
+                    )
+                    raise
+            except Exception as e:
+                logger.error(f"Неожиданная ошибка при отправке сообщения: {e}")
+                raise
 
     def run(self) -> None:
-        """Запускает бота."""
+        """Запускает бота с оптимизированными настройками для нестабильной
+        сети."""
         logger.info("Запуск бота...")
+        # Настройки для нестабильной сети
         self.application.run_polling(
-            drop_pending_updates=True
+            drop_pending_updates=True,    # Сбрасываем старые обновления
+            poll_interval=2.0,            # Увеличенный интервал polling
+            timeout=30,                   # Увеличенный timeout для getUpdates
+            bootstrap_retries=5           # Больше попыток подключения
         )
 
 
