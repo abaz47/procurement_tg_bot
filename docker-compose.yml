@@ -1,0 +1,26 @@
+version: '3.8'
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1450
+
+services:
+  procurement-bot:
+    build: .
+    container_name: procurement-tg-bot
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./users.cfg:/app/users.cfg
+      - ./logs:/app/logs
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

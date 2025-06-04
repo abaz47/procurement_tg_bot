@@ -86,9 +86,9 @@ class UserManager:
                         admins.add(user_id)
                     else:
                         logger.warning(
-                            f"{WARNING_MESSAGES[
-                                'invalid_admin_id'
-                            ].format(key=key)}"
+                            WARNING_MESSAGES['invalid_admin_id'].format(
+                                key=key
+                            )
                         )
             if not admins:
                 raise ValueError(ERROR_MESSAGES['no_admins'])
@@ -100,19 +100,15 @@ class UserManager:
                         allowed_users.add(user_id)
                     else:
                         logger.warning(
-                            f"{WARNING_MESSAGES[
-                                'invalid_user_id'
-                            ].format(key=key)}"
+                            WARNING_MESSAGES['invalid_user_id'].format(key=key)
                         )
             self.admins = admins
             self.allowed_users = allowed_users | admins
             logger.info(
-                f"{INFO_MESSAGES[
-                    'users_loaded'
-                ].format(
+                INFO_MESSAGES['users_loaded'].format(
                     admins_count=len(admins),
                     users_count=len(allowed_users)
-                )}"
+                )
             )
         except Exception as e:
             logger.error(f"{ERROR_MESSAGES['config_error'].format(error=e)}")
@@ -136,8 +132,24 @@ class Bot:
 
     def __init__(self, token: str):
         self.user_manager = UserManager()
-        self.application = Application.builder().token(token).build()
+        logger.info("Создание Application...")
+        self.application = (
+            Application.builder()
+            .token(token)
+            .connect_timeout(30)
+            .read_timeout(30)
+            .write_timeout(30)
+            .pool_timeout(30)
+            .get_updates_connect_timeout(30)
+            .get_updates_read_timeout(30)
+            .get_updates_write_timeout(30)
+            .get_updates_pool_timeout(30)
+            .build()
+        )
+        logger.info("Настройка обработчиков...")
         self._setup_handlers()
+        self._setup_error_handler()
+        logger.info("Бот инициализирован")
 
     def _setup_handlers(self) -> None:
         """Настраивает обработчики команд."""
@@ -371,10 +383,10 @@ class Bot:
                 )
             except Exception as e:
                 logger.error(
-                    f"{ERROR_MESSAGES['order_send_error'].format(
+                    ERROR_MESSAGES['order_send_error'].format(
                         admin_id=admin_id,
                         error=e
-                    )}"
+                    )
                 )
 
     async def cancel_order(
@@ -404,13 +416,102 @@ class Bot:
             GENERAL_MESSAGES['cancel_not_available']
         )
 
+    def _setup_error_handler(self) -> None:
+        """Настраивает обработчик ошибок."""
+        self.application.add_error_handler(self.error_handler)
+
+    async def error_handler(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Обработчик ошибок."""
+        from telegram.error import TimedOut, NetworkError
+        error = context.error
+        if isinstance(error, (TimedOut, NetworkError)):
+            logger.warning(f"{ERROR_MESSAGES['network_error']}: {error}")
+            return
+        logger.error(f"{ERROR_MESSAGES['unhandled_error']}: {error}")
+        if (
+            update
+            and hasattr(update, 'effective_chat')
+            and update.effective_chat
+        ):
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=GENERAL_MESSAGES['error_occurred']
+                )
+            except Exception as e:
+                logger.error(f"{ERROR_MESSAGES['message_send_error']}: {e}")
+
+    async def check_bot_connection(self) -> bool:
+        """Проверяет подключение к Telegram API."""
+        try:
+            logger.info("Проверка подключения к Telegram API...")
+            bot_info = await self.application.bot.get_me()
+            logger.info(f"Подключение успешно. Бот: @{bot_info.username}")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка подключения к Telegram API: {e}")
+            return False
+
+    async def check_and_clear_webhook(self) -> None:
+        """Проверяет и очищает webhook если он установлен."""
+        try:
+            logger.info("Проверка статуса webhook...")
+            webhook_info = await self.application.bot.get_webhook_info()
+            if webhook_info.url:
+                logger.warning(
+                    f"Обнаружен активный webhook: {webhook_info.url}"
+                )
+                logger.info("Удаление webhook...")
+                await self.application.bot.delete_webhook(
+                    drop_pending_updates=True
+                )
+                logger.info("Webhook успешно удален")
+            else:
+                logger.info("Webhook не установлен")
+        except Exception as e:
+            logger.error(f"Ошибка при проверке webhook: {e}")
+
     def run(self) -> None:
         """Запускает бота."""
-        logger.info("Бот запущен. Нажмите Ctrl+C для остановки.")
-        self.application.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            close_loop=False
-        )
+        import asyncio
+
+        async def start_bot():
+            """Асинхронный запуск бота."""
+            logger.info("Запуск бота...")
+            # Проверяем подключение
+            if not await self.check_bot_connection():
+                logger.error("Не удалось подключиться к Telegram API")
+                return
+            await self.check_and_clear_webhook()
+            # Запускаем polling
+            logger.info("Начало polling...")
+            await self.application.initialize()
+            await self.application.start()
+            await self.application.updater.start_polling(
+                drop_pending_updates=True
+            )
+            logger.info("Бот запущен успешно. Нажмите Ctrl+C для остановки.")
+            try:
+                # Бесконечный цикл для поддержания работы бота
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                logger.info("Получен сигнал остановки")
+            finally:
+                await self.application.updater.stop()
+                await self.application.stop()
+                await self.application.shutdown()
+        try:
+            asyncio.run(start_bot())
+        except KeyboardInterrupt:
+            logger.info("Получен сигнал остановки")
+        except Exception as e:
+            logger.error(f"Ошибка при запуске: {e}")
+            raise
 
 
 def main() -> None:
@@ -420,14 +521,19 @@ def main() -> None:
     if not token:
         logger.error(ERROR_MESSAGES['no_token'])
         sys_exit(1)
+
+    logger.info("Инициализация бота...")
+    bot = Bot(token)
     try:
-        bot = Bot(token)
+        logger.info("Запуск polling...")
         bot.run()
     except KeyboardInterrupt:
         logger.info("Бот остановлен пользователем")
     except Exception as e:
         logger.error(f"{ERROR_MESSAGES['bot_start_error'].format(error=e)}")
         sys_exit(1)
+    finally:
+        logger.info("Завершение работы бота")
 
 
 if __name__ == '__main__':
