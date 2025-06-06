@@ -9,6 +9,7 @@ from sys import exit as sys_exit
 from typing import Optional, Set
 
 from dotenv import load_dotenv
+from pytz import timezone
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -36,6 +37,8 @@ logger_config(
     level=INFO
 )
 logger = getLogger(__name__)
+
+MOSCOW_TZ = timezone('Europe/Moscow')
 
 
 class OrderState(Enum):
@@ -348,7 +351,7 @@ class Bot:
         dept_name = context.user_data['department']['name']
         product_info = context.user_data['product']
         quantity = context.user_data['quantity']
-        current_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+        current_date = datetime.now(MOSCOW_TZ).strftime("%d.%m.%Y %H:%M")
         # Формируем сообщение для пользователя
         user_message = (
             f"{INFO_MESSAGES['order_sent_successfully']}\n\n"
